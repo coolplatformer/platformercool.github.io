@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Platformer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 2px solid #fff;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            background: #000;
+        }
+        .container {
+            display: flex;
+            gap: 12px;
+            align-items: start;
+        }
+        .editor-instructions {
+            width: 220px;
+            color: #fff;
+            background: transparent;
+            border-right: 1px solid rgba(255,255,255,0.08);
+            padding-right: 12px;
+            box-sizing: border-box;
+            font-family: "Noto Sans", Arial, sans-serif;
+        }
+        .editor-instructions h3 {
+            margin: 0 0 8px 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: #FFF;
+        }
+        .editor-instructions ul {
+            margin: 0;
+            padding-left: 18px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: rgba(255,255,255,0.95);
+        }
+        .editor-instructions li strong { color: #FFF; }
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .sidebar button {
+            background: #000;
+            color: #fff;
+            border: 2px solid #fff;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-family: Arial, sans-serif;
+        }
+        .sidebar button:disabled {
+            opacity: 0.35;
+            cursor: default;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="editor-instructions" aria-hidden="false">
+            <h3>Editor Controls</h3>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+                <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                    <button class="tool-btn" data-tool="block">Block</button>
+                    <button class="tool-btn" data-tool="spike">Spike</button>
+                    <button class="tool-btn" data-tool="jumppad">Jumppad</button>
+                    <button class="tool-btn" data-tool="semisolid">Semisolid</button>
+                    <button class="tool-btn" data-tool="flag">Win Condition</button>
+                    <button class="tool-btn" data-tool="eraser">Eraser</button>
+                </div>
+                <ul style="margin:8px 0 0 16px;font-size:13px;line-height:1.4;">
+                    <li><strong>Mode:</strong> G to toggle Play / Editor</li>
+                    <li><strong>Snap:</strong> Z to toggle grid snap</li>
+                    <li><strong>Spawn:</strong> P to set player spawn at cursor</li>
+                    <li><strong>Export:</strong> X to export level (downloads HTML)</li>
+                    <li><strong>Undo / Redo:</strong> Ctrl+Z / Ctrl+Y or buttons</li>
+                    <li><strong>Mouse:</strong> Click & drag to place/remove</li>
+                </ul>
+            </div>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div class="sidebar">
+            <button id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
+            <button id="redoBtn" title="Redo (Ctrl+Y)">Redo</button>
+            <button id="clearBtn" title="Clear Level">Clear</button>
+           <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;color:#fff;font-size:13px;">
+               <label style="display:flex;align-items:center;gap:8px;">
+                   <input type="checkbox" id="movingToggle"> Make placed objects move
+               </label>
+               <div style="display:flex;gap:6px;align-items:center;">
+                   <button id="moveDec">-</button>
+                   <div id="moveSpeed" style="min-width:36px;text-align:center;color:#fff;">1</div>
+                   <button id="moveInc">+</button>
+               </div>
+           </div>
+        </div>
+    </div>
+    
+    <script type="module" src="game.js"></script>
+</body>
+</html>
