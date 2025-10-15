@@ -36,7 +36,7 @@ class Game {
 
         // Ensure ground aligns to grid: place default ground at canvas.height - gridSize
         const initialPlatforms = window.INITIAL_LEVEL_DATA
-            ? window.INITIAL_LEVEL_DATA.map(p => new Platform(p.x, p.y, p.width, p.height, p.type))
+            ? window.INITIAL_LEVEL_DATA.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable))
             : [new Platform(0, canvas.height - this.gridSize, canvas.width, this.gridSize)];
         this.platforms = initialPlatforms;
         
@@ -58,6 +58,7 @@ class Game {
         // UI toggle states for placing moving blocks
         this.placeMoving = false;
         this.movingSpeed = 1;
+        this.placeCollidable = true;
 
         // Hook UI buttons
         window.addEventListener('DOMContentLoaded', () => {
@@ -77,6 +78,10 @@ class Game {
             if (clearBtn) clearBtn.addEventListener('click', () => this.clearLevel());
             if (movingToggle) movingToggle.addEventListener('change', (e) => {
                 this.placeMoving = !!e.currentTarget.checked;
+            });
+            const movingCollidable = document.getElementById('movingCollidable');
+            if (movingCollidable) movingCollidable.addEventListener('change', (e) => {
+                this.placeCollidable = !!e.currentTarget.checked;
             });
             if (moveInc) moveInc.addEventListener('click', () => { this.movingSpeed = Math.min(6, this.movingSpeed + 1); moveSpeedDisplay.textContent = this.movingSpeed; });
             if (moveDec) moveDec.addEventListener('click', () => { this.movingSpeed = Math.max(0, this.movingSpeed - 1); moveSpeedDisplay.textContent = this.movingSpeed; });
@@ -206,7 +211,7 @@ class Game {
             // if placing moving is enabled, give initial horizontal velocity regardless of object type
             let vx = 0, vy = 0;
             if (this.placeMoving) vx = this.movingSpeed;
-            this.platforms.push(new Platform(x, y, w, h, this.currentTool, vx, vy));
+            this.platforms.push(new Platform(x, y, w, h, this.currentTool, vx, vy, !!this.placeCollidable));
             this.pushHistory();
         }
     }
@@ -214,7 +219,7 @@ class Game {
     pushHistory() {
         // Serialize platforms and spawn
         const snap = {
-            platforms: this.platforms.map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height, type: p.type, vx: p.vx || 0, vy: p.vy || 0 })),
+            platforms: this.platforms.map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height, type: p.type, vx: p.vx || 0, vy: p.vy || 0, collidable: typeof p.collidable === 'undefined' ? true : p.collidable })),
             spawn: { x: this.spawn.x, y: this.spawn.y }
         };
         this.history.push(snap);
@@ -230,7 +235,7 @@ class Game {
         const current = this.history.pop();
         this.redoStack.push(current);
         const prev = this.history[this.history.length - 1];
-        this.platforms = prev.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0));
+        this.platforms = prev.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
         this.spawn = { x: prev.spawn.x, y: prev.spawn.y };
         this.resetPlayerToSpawn();
         this.updateButtons();
@@ -240,7 +245,7 @@ class Game {
         if (this.redoStack.length === 0) return;
         const next = this.redoStack.pop();
         this.history.push(next);
-        this.platforms = next.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0));
+        this.platforms = next.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
         this.spawn = { x: next.spawn.x, y: next.spawn.y };
         this.resetPlayerToSpawn();
         this.updateButtons();
@@ -311,16 +316,34 @@ class Game {
         this.player.onGround = false;
         
         // Move platforms that have velocities (simple horizontal bounce on canvas edges)
-        for (let p of this.platforms) {
+        for (let i = 0; i < this.platforms.length; i++) {
+            const p = this.platforms[i];
             if ((p.vx && p.vx !== 0) || (p.vy && p.vy !== 0)) {
+                const oldX = p.x, oldY = p.y;
                 p.x += p.vx;
                 p.y += p.vy;
-                // bounce horizontally off canvas edges
+                // bounce off canvas edges
                 if (p.x < 0) { p.x = 0; p.vx *= -1; }
                 if (p.x + p.width > canvas.width) { p.x = canvas.width - p.width; p.vx *= -1; }
-                // clamp vertically (optional bounce)
                 if (p.y < 0) { p.y = 0; p.vy *= -1; }
                 if (p.y + p.height > canvas.height) { p.y = canvas.height - p.height; p.vy *= -1; }
+                // collision with other platforms: if overlapping any non-self platform, revert and reverse velocity
+                let collided = false;
+                for (let j = 0; j < this.platforms.length; j++) {
+                    if (i === j) continue;
+                    const q = this.platforms[j];
+                    if (p.x < q.x + q.width && p.x + p.width > q.x &&
+                        p.y < q.y + q.height && p.y + p.height > q.y) {
+                        collided = true;
+                        break;
+                    }
+                }
+                if (collided) {
+                    p.x = oldX;
+                    p.y = oldY;
+                    p.vx *= -1;
+                    p.vy *= -1;
+                }
             }
         }
         
@@ -328,6 +351,7 @@ class Game {
         const prevY = this.player.y - this.player.velocityY; 
 
         for (let platform of this.platforms) {
+            if (!platform.collidable) continue;
             if (this.checkCollision(this.player, platform)) {
                 
                 if (platform.type === 'spike') {
@@ -711,6 +735,7 @@ class Game {
             height: p.height,
             type: p.type,
             vx: p.vx || 0,
+            collidable: typeof p.collidable === 'undefined' ? true : p.collidable,
             vy: p.vy || 0
         }));
         
@@ -726,7 +751,7 @@ canvas.width = 800;
 canvas.height = 600;
 
 class Platform {
-    constructor(x, y, width, height, type = 'block', vx = 0, vy = 0) {
+    constructor(x, y, width, height, type = 'block', vx = 0, vy = 0, collidable = true) {
         this.x = x;
         this.y = y;
         this.width = width;
@@ -734,6 +759,7 @@ class Platform {
         this.type = type; 
         this.vx = vx;
         this.vy = vy;
+        this.collidable = collidable;
         this.initialX = x;
         this.initialY = y;
     }
@@ -772,7 +798,7 @@ class Player {
 class Game {
     constructor(platformsData, spawnData) {
         this.player = new Player(spawnData.x, spawnData.y);
-        this.platforms = platformsData.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0));
+        this.platforms = platformsData.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
         this.input = new InputHandler();
         this.keys = {};
         this.attempts = 0;
@@ -865,20 +891,40 @@ class Game {
         this.player.onGround = false;
         
         // Move platforms that have velocities (simple horizontal bounce on canvas edges)
-        for (let p of this.platforms) {
+        for (let i = 0; i < this.platforms.length; i++) {
+            const p = this.platforms[i];
             if ((p.vx && p.vx !== 0) || (p.vy && p.vy !== 0)) {
+                const oldX = p.x, oldY = p.y;
                 p.x += p.vx;
                 p.y += p.vy;
                 if (p.x < 0) { p.x = 0; p.vx *= -1; }
                 if (p.x + p.width > canvas.width) { p.x = canvas.width - p.width; p.vx *= -1; }
                 if (p.y < 0) { p.y = 0; p.vy *= -1; }
                 if (p.y + p.height > canvas.height) { p.y = canvas.height - p.height; p.vy *= -1; }
+                // check collisions with other platforms and revert + reverse if collided
+                let collided = false;
+                for (let k = 0; k < this.platforms.length; k++) {
+                    if (this.platforms[k] === p) continue;
+                    const q = this.platforms[k];
+                    if (p.x < q.x + q.width && p.x + p.width > q.x &&
+                        p.y < q.y + q.height && p.y + p.height > q.y) {
+                        collided = true;
+                        break;
+                    }
+                }
+                if (collided) {
+                    p.x = oldX;
+                    p.y = oldY;
+                    p.vx *= -1;
+                    p.vy *= -1;
+                }
             }
         }
         
         const prevY = this.player.y - this.player.velocityY; 
 
         for (let platform of this.platforms) {
+            if (!platform.collidable) continue;
             if (this.checkCollision(this.player, platform)) {
                 // Spike handling
                 if (platform.type === 'spike') {
@@ -1089,10 +1135,12 @@ class Game {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const platforms = ${levelDataJson}.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0));
+    const platforms = ${levelDataJson}.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
     const spawn = ${spawnJson};
     new Game(platforms, spawn);
-});`;
+});
+`;
+
         // --- End Runtime Game Code Definition ---
 
         
