@@ -77,7 +77,8 @@
                     <button class="tool-btn" data-tool="spike">Spike</button>
                     <button class="tool-btn" data-tool="jumppad">Jumppad</button>
                     <button class="tool-btn" data-tool="semisolid">Semisolid</button>
-                    <button class="tool-btn" data-tool="flag">Win Condition</button>
+                    <button class="tool-btn" data-tool="flag">Win</button>
+                    <button class="tool-btn" data-tool="collectible">Collectible</button>
                     <button class="tool-btn" data-tool="eraser">Eraser</button>
                 </div>
                 <ul style="margin:8px 0 0 16px;font-size:13px;line-height:1.4;">
@@ -98,15 +99,27 @@
            <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;color:#fff;font-size:13px;">
                <label style="display:flex;align-items:center;gap:8px;">
                    <input type="checkbox" id="movingToggle"> Make placed objects move
+                   <div style="display:inline-flex;align-items:center;gap:6px;margin-left:8px;">
+                       <button id="moveDec">-</button>
+                       <div id="moveSpeed" style="min-width:36px;text-align:center;color:#fff;">1</div>
+                       <button id="moveInc">+</button>
+                   </div>
                </label>
                <label style="display:flex;align-items:center;gap:8px;">
+                   <input type="checkbox" id="showCoinCounter"> Show coin counter
+               </label>
+              <label style="display:flex;align-items:center;gap:8px;">
                   <input type="checkbox" id="movingCollidable" checked> Collidable when placed
               </label>
-               <div style="display:flex;gap:6px;align-items:center;">
-                   <button id="moveDec">-</button>
-                   <div id="moveSpeed" style="min-width:36px;text-align:center;color:#fff;">1</div>
-                   <button id="moveInc">+</button>
-               </div>
+              <label style="display:flex;align-items:center;gap:8px;">
+                  <span style="color:#fff;">Win condition:</span>
+                  <select id="winConditionSelect" style="margin-left:6px;">
+                      <option value="flag">Touch (Win)</option>
+                      <option value="coins">Collect all collectibles</option>
+                      <option value="both">Both</option>
+                  </select>
+                  <input id="coinGoalInput" type="number" min="1" value="1" style="width:64px;margin-left:8px;display:none;" title="Number of coins required to win">
+              </label>
            </div>
         </div>
     </div>

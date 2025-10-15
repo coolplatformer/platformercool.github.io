@@ -11,5 +11,10 @@ export class Platform {
         // remember original placement so moving platforms can be reset
         this.initialX = x;
         this.initialY = y;
+        // remember original velocities so direction can be restored on reset
+        this.initialVx = vx;
+        this.initialVy = vy;
+        // track collected state for collectibles so they can be restored on death/reset
+        this.collected = false;
     }
 }

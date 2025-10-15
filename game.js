@@ -59,6 +59,10 @@ class Game {
         this.placeMoving = false;
         this.movingSpeed = 1;
         this.placeCollidable = true;
+        this.collectedCount = 0;
+        this.showCoinCounter = false;
+        this.winCondition = 'flag'; // 'flag' | 'coins' | 'none'
+        this.coinGoal = 1; // new: number of coins required to win
 
         // Hook UI buttons
         window.addEventListener('DOMContentLoaded', () => {
@@ -83,8 +87,29 @@ class Game {
             if (movingCollidable) movingCollidable.addEventListener('change', (e) => {
                 this.placeCollidable = !!e.currentTarget.checked;
             });
+            const showCoinCounter = document.getElementById('showCoinCounter');
+            if (showCoinCounter) showCoinCounter.addEventListener('change', (e) => {
+                this.showCoinCounter = !!e.currentTarget.checked;
+            });
+            if (winConditionSelect) {
+                winConditionSelect.value = this.winCondition;
+                winConditionSelect.addEventListener('change', (e) => {
+                    this.winCondition = e.currentTarget.value || 'flag';
+                    // show/hide coin goal input
+                    const coinGoalInput = document.getElementById('coinGoalInput');
+                    if (coinGoalInput) coinGoalInput.style.display = (this.winCondition === 'coins' || this.winCondition === 'both') ? 'inline-block' : 'none';
+                });
+            }
             if (moveInc) moveInc.addEventListener('click', () => { this.movingSpeed = Math.min(6, this.movingSpeed + 1); moveSpeedDisplay.textContent = this.movingSpeed; });
             if (moveDec) moveDec.addEventListener('click', () => { this.movingSpeed = Math.max(0, this.movingSpeed - 1); moveSpeedDisplay.textContent = this.movingSpeed; });
+            const coinGoalInput = document.getElementById('coinGoalInput');
+            if (coinGoalInput) {
+                coinGoalInput.value = this.coinGoal;
+                coinGoalInput.addEventListener('change', (e) => {
+                    const v = parseInt(e.currentTarget.value) || 1;
+                    this.coinGoal = Math.max(1, v);
+                });
+            }
             this.updateButtons();
         });
 
@@ -102,6 +127,7 @@ class Game {
                 if (key === '2') this.currentTool = 'spike';
                 if (key === '3') this.currentTool = 'jumppad';
                 if (key === '4') this.currentTool = 'flag';
+                if (key === '5') this.currentTool = 'collectible';
                 if (key === 'e') this.currentTool = 'eraser';
                 if (key === 'g') this.togglePlayMode(); // Toggle G for Game/Editor mode
                 if (key === 'x') this.exportLevel(); // Export level
@@ -275,6 +301,11 @@ class Game {
             if (typeof p.initialX !== 'undefined') {
                 p.x = p.initialX;
                 p.y = p.initialY;
+               // restore original movement direction/speed
+               if (typeof p.initialVx !== 'undefined') p.vx = p.initialVx;
+               if (typeof p.initialVy !== 'undefined') p.vy = p.initialVy;
+               // restore collected state on mode toggle (put collectibles back)
+               if (p.type === 'collectible') p.collected = false;
             }
         }
     }
@@ -366,17 +397,50 @@ class Game {
                     // Only trigger win for exported runtime; in the editor/play-testing inside the editor
                     // touching a flag should not end the editor session.
                     if (this.isExported) {
-                        this.won = true;
-                        // snap player to flag top for nicer effect
-                        this.player.x = platform.x;
-                        this.player.y = platform.y - this.player.height;
-                        this.player.velocityX = 0;
-                        this.player.velocityY = 0;
-                        return;
+                        // exported runtime: touching the flag wins if configured for 'flag',
+                        // or for 'both' only when required coins have been collected as well.
+                        const winCfg = window.INITIAL_WIN_CONDITION || this.winCondition;
+                        const coinGoal = (typeof window.INITIAL_COIN_GOAL === 'number') ? window.INITIAL_COIN_GOAL : (parseInt(window.INITIAL_COIN_GOAL) || this.coinGoal || 1);
+                        const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+                        if (winCfg === 'flag' || (winCfg === 'both' && collected >= coinGoal)) {
+                            this.won = true;
+                            this.player.x = platform.x;
+                            this.player.y = platform.y - this.player.height;
+                            this.player.velocityX = 0;
+                            this.player.velocityY = 0;
+                            return;
+                        } else {
+                            // flag is decorative unless conditions met
+                            continue;
+                        }
                     } else {
-                        // In editor runtime, treat flag as a non-solid decorative object (no collision resolution)
-                        continue;
+                        // In editor/playtesting runtime, allow win on touching the flag when editor is set to 'flag'
+                        // or when set to 'both' AND the required coinGoal has been collected.
+                        const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+                        if (this.winCondition === 'flag' || (this.winCondition === 'both' && collected >= (this.coinGoal || 1))) {
+                            this.won = true;
+                            this.player.x = platform.x;
+                            this.player.y = platform.y - this.player.height;
+                            this.player.velocityX = 0;
+                            this.player.velocityY = 0;
+                            return;
+                        } else {
+                            // treat as decorative until conditions met
+                            continue;
+                        }
                     }
+                }
+                
+                // Collectible: pick up and remove immediately (only in play mode)
+                if (platform.type === 'collectible') {
+                    // mark as collected (do not remove) so we can restore on death/reset
+                    if (!platform.collected) {
+                        this.spawnDeathParticles(platform.x + platform.width/2, platform.y + platform.height/2, 10);
+                        this.collectedCount = (this.collectedCount || 0) + 1;
+                        platform.collected = true;
+                    }
+                    // ignore for collision resolution when collected
+                    continue;
                 }
                 
                 // If it's a solid object (block or jumppad) use robust AABB penetration resolution
@@ -453,6 +517,29 @@ class Game {
             this.resetPlayerToSpawn(true);
         }
 
+        // after collision loop, check coins win condition in play mode for exported runtime
+        if (this.isExported) {
+            const winCond = window.INITIAL_WIN_CONDITION || this.winCondition;
+            const coinGoal = (typeof window.INITIAL_COIN_GOAL === 'number') ? window.INITIAL_COIN_GOAL : (parseInt(window.INITIAL_COIN_GOAL) || this.coinGoal || 1);
+            // Only auto-win on coins when win condition is explicitly "coins".
+            // For "both" we must still touch the flag to win.
+            if (winCond === 'coins') {
+                const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+                if (collected >= coinGoal) {
+                    this.won = true;
+                }
+            }
+        } else {
+            // in editor playtesting, also allow coins win if editor selected that mode
+            // Only auto-win on coins in editor when explicitly set to "coins"
+            if (!this.isExported && this.winCondition === 'coins') {
+                const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+                if (collected >= (this.coinGoal || 1)) {
+                    this.won = true;
+                }
+            }
+        }
+
         // update particles each frame
         this.updateParticles();
     }
@@ -477,8 +564,8 @@ class Game {
             
             // For spikes we want a transparent background (no filled rect)
             // Do not draw a full filled/stroked rect for spikes or semisolids; they have special visuals
-            if (platform.type === 'spike' || platform.type === 'semisolid') {
-                // no stroked rect for spikes — transparent background with triangle only
+            if (platform.type === 'spike' || platform.type === 'semisolid' || platform.type === 'collectible') {
+                // no stroked/filled rect for spikes, semisolids, or collectibles — they have special visuals
             } else {
                 ctx.fillStyle = platform.type === 'jumppad' ? '#AAA' : '#FFF';
                 ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
@@ -521,6 +608,31 @@ class Game {
                 ctx.fillRect(platform.x, platform.y, platform.width, hh);
             }
             
+            // Draw Flag visual as a yellow dot (editor runtime)
+            if (platform.type === 'flag') {
+                const cx = platform.x + platform.width/2;
+                const cy = platform.y + platform.height/2;
+                ctx.fillStyle = '#FFD400';
+                ctx.beginPath();
+                ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.22, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Draw Collectible visual: small cyan circle centered in the cell
+            if (platform.type === 'collectible' && !platform.collected) {
+                const cx = platform.x + platform.width/2;
+                const cy = platform.y + platform.height/2;
+                // borderless filled collectible: no cell fill/background, just a filled cyan dot
+                ctx.fillStyle = '#00FFFF';
+                ctx.beginPath();
+                ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.28, 0, Math.PI * 2);
+                ctx.fill();
+                // add white border
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#FFF';
+                ctx.stroke();
+            }
+            
             // If platform has velocity, draw a subtle blue border to indicate movement
             if ((platform.vx && platform.vx !== 0) || (platform.vy && platform.vy !== 0)) {
                 ctx.save();
@@ -559,12 +671,25 @@ class Game {
             ctx.globalAlpha = 1;
         }
 
+        // Draw coin counter (if enabled)
+        if (this.showCoinCounter) {
+            const total = this.platforms.filter(p => p.type === 'collectible').length;
+            const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(12, 12, 140, 36);
+            ctx.fillStyle = '#FFF';
+            ctx.font = '14px "Noto Sans", Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Coins: ${collected} / ${total}`, 20, 36);
+        }
+
         // Draw Editor UI
         if (this.isEditing) {
             this.drawEditorOverlay();
             // draw spawn marker
             this.drawSpawnMarker();
         }
+        // In editor/play mode if collectibles are marked collected, still hide them visually (only active in play)
 
         // Win overlay
         if (this.won) {
@@ -636,9 +761,9 @@ class Game {
         ctx.strokeStyle = strokeStyle;
         ctx.lineWidth = 2;
         // draw full-cell preview where relevant (semisolid already drawn above)
-        if (this.currentTool !== 'semisolid') ctx.fillRect(gx, gy, w, h);
-        // don't draw a border for spike or semisolid preview to keep those cells borderless
-        if (this.currentTool !== 'spike' && this.currentTool !== 'semisolid') ctx.strokeRect(gx, gy, w, h);
+        if (this.currentTool !== 'semisolid' && this.currentTool !== 'collectible') ctx.fillRect(gx, gy, w, h);
+        // don't draw a border for spike, semisolid, or collectible preview to keep those cells borderless
+        if (this.currentTool !== 'spike' && this.currentTool !== 'semisolid' && this.currentTool !== 'collectible') ctx.strokeRect(gx, gy, w, h);
         
         // Add current tool visual cue inside the preview square
         if (this.currentTool === 'spike') {
@@ -663,6 +788,19 @@ class Game {
              ctx.lineTo(midX + w/4, topY + h/4);
              ctx.closePath();
              ctx.fill();
+        }
+        else if (this.currentTool === 'collectible') {
+            const cx = gx + w/2;
+            const cy = gy + h/2;
+            // preview as borderless filled cyan dot (no cell background)
+            ctx.fillStyle = '#00FFFF';
+            ctx.beginPath();
+            ctx.arc(cx, cy, Math.min(w, h) * 0.28, 0, Math.PI * 2);
+            ctx.fill();
+            // white outline for preview
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#FFF';
+            ctx.stroke();
         }
 
         // HUD moved to HTML instructions panel (left). Canvas HUD text removed for clarity.
@@ -693,6 +831,19 @@ class Game {
         this.player.velocityX = 0;
         this.player.velocityY = 0;
         this.player.onGround = false;
+        // On death, also reset moving platforms back to their original position and direction
+        if (death) {
+            for (let p of this.platforms) {
+                if (typeof p.initialX !== 'undefined') {
+                    p.x = p.initialX;
+                    p.y = p.initialY;
+                    if (typeof p.initialVx !== 'undefined') p.vx = p.initialVx;
+                    if (typeof p.initialVy !== 'undefined') p.vy = p.initialVy;
+                    // restore collected collectibles on death
+                    if (p.type === 'collectible') p.collected = false;
+                }
+            }
+        }
         // optional small flash / particle burst on death handled elsewhere; when toggling modes/undo shouldn't show effect
         // Do not spawn particles at the spawn point — death particles are emitted at the death location instead.
     }
@@ -741,6 +892,9 @@ class Game {
         
         const levelDataJson = JSON.stringify(exportedPlatforms, null, 2);
         const spawnJson = JSON.stringify({ x: this.spawn.x, y: this.spawn.y });
+        const showCoinCounterJson = JSON.stringify(!!this.showCoinCounter);
+        const winConditionJson = JSON.stringify(this.winCondition || 'flag');
+        const coinGoalJson = JSON.stringify(this.coinGoal || 1);
 
         // --- Start Runtime Game Code Definition ---
         const runtimeGameContent = `const GRAVITY = 0.5;
@@ -749,6 +903,9 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 canvas.width = 800;
 canvas.height = 600;
+const SHOW_COIN_COUNTER = !!window.INITIAL_SHOW_COIN_COUNTER;
+const WIN_CONDITION = window.INITIAL_WIN_CONDITION || 'flag';
+const COIN_GOAL = (typeof window.INITIAL_COIN_GOAL === 'number') ? window.INITIAL_COIN_GOAL : (parseInt(window.INITIAL_COIN_GOAL) || 1);
 
 class Platform {
     constructor(x, y, width, height, type = 'block', vx = 0, vy = 0, collidable = true) {
@@ -762,6 +919,10 @@ class Platform {
         this.collidable = collidable;
         this.initialX = x;
         this.initialY = y;
+        this.initialVx = vx;
+        this.initialVy = vy;
+        // track collected state so exported runtime can hide/restore collectibles
+        this.collected = false;
     }
 }
 
@@ -791,6 +952,7 @@ class Player {
         this.speed = 0.9;
         this.jumpPower = 10;
         this.onGround = false;
+        this.alpha = 1; // fade value for exported win fade-out
     }
 }
 
@@ -806,6 +968,7 @@ class Game {
         // particle system
         this.particles = [];
         this.spawn = { x: spawnData.x, y: spawnData.y };
+        this.showCoinCounter = SHOW_COIN_COUNTER;
         
         this.setupEventListeners();
         this.gameLoop();
@@ -862,11 +1025,27 @@ class Game {
             if (typeof p.initialX !== 'undefined') {
                 p.x = p.initialX;
                 p.y = p.initialY;
+                if (typeof p.initialVx !== 'undefined') p.vx = p.initialVx;
+                if (typeof p.initialVy !== 'undefined') p.vy = p.initialVy;
+                // restore collected collectibles on respawn so they reappear after death/playtesting
+                if (p.type === 'collectible') p.collected = false;
             }
         }
     }
     
     update() {
+        // If won, freeze movement and fade player out
+        if (this.won) {
+            // lock movement
+            this.player.velocityX = 0;
+            this.player.velocityY = 0;
+            // steadily reduce alpha until fully transparent (monotonic)
+            this.player.alpha = typeof this.player.alpha === 'number' ? Math.max(0, this.player.alpha - 0.02) : 1;
+            // update particles during fade
+            this.updateParticles();
+            return;
+        }
+            
         // Handle input
         if (this.keys['arrowleft'] || this.keys['a']) {
             this.player.velocityX -= this.player.speed;
@@ -926,6 +1105,16 @@ class Game {
         for (let platform of this.platforms) {
             if (!platform.collidable) continue;
             if (this.checkCollision(this.player, platform)) {
+                // Collectible handling (mark collected and spawn particles)
+                if (platform.type === 'collectible') {
+                    if (!platform.collected) {
+                        this.spawnDeathParticles(platform.x + platform.width/2, platform.y + platform.height/2, 10);
+                        platform.collected = true;
+                    }
+                    // do not perform collision resolution for collectibles
+                    continue;
+                }
+                
                 // Spike handling
                 if (platform.type === 'spike') {
                     this.spawnDeathParticles(this.player.x + this.player.width/2, this.player.y + this.player.height/2);
@@ -935,12 +1124,30 @@ class Game {
                 }
                 // Flag win
                 if (platform.type === 'flag') {
-                    this.player.x = platform.x;
-                    this.player.y = platform.y - this.player.height;
-                    this.player.velocityX = 0;
-                    this.player.velocityY = 0;
-                    this.won = true;
-                    return;
+                    // only count flag as win if runtime configured for flag wins
+                    // handle 'flag' and 'both' (both requires coins collected)
+                    if (WIN_CONDITION === 'flag') {
+                        this.player.x = platform.x;
+                        this.player.y = platform.y - this.player.height;
+                        this.player.velocityX = 0;
+                        this.player.velocityY = 0;
+                        this.won = true;
+                        return;
+                    } else if (WIN_CONDITION === 'both') {
+                        const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+                        if (collected >= COIN_GOAL) {
+                            this.player.x = platform.x;
+                            this.player.y = platform.y - this.player.height;
+                            this.player.velocityX = 0;
+                            this.player.velocityY = 0;
+                            this.won = true;
+                            return;
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
                 }
                 // Robust AABB overlap resolution for solid platforms (block / jumppad)
                 if (platform.type === 'block' || platform.type === 'jumppad' || platform.type === 'semisolid') {
@@ -1013,6 +1220,16 @@ class Game {
             this.resetPlayerToSpawnDeath();
         }
 
+        // after collisions and particle updates, check coins win condition
+        // Only auto-win on coins when WIN_CONDITION is explicitly "coins".
+        // If WIN_CONDITION is "both", the player must still touch the flag after collecting coins.
+        if (WIN_CONDITION === 'coins') {
+            const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+            if (collected >= COIN_GOAL) {
+                this.won = true;
+            }
+        }
+
         // update particles each frame
         this.updateParticles();
     }
@@ -1035,7 +1252,7 @@ class Game {
         for (let platform of this.platforms) {
             
             // In exported runtime do not draw a full filled/stroked rect for spikes or semisolids
-            if (platform.type === 'spike' || platform.type === 'semisolid') {
+            if (platform.type === 'spike' || platform.type === 'semisolid' || platform.type === 'collectible') {
                 // leave background transparent; semisolid will draw its top-half below
             } else {
                 ctx.fillStyle = platform.type === 'jumppad' ? '#AAA' : '#FFF';
@@ -1063,6 +1280,19 @@ class Game {
                 ctx.closePath();
                 ctx.fill();
                 // no stroke for spikes
+            }
+            
+            // Draw Collectible visual: small cyan circle centered in the cell (only if not collected)
+            if (platform.type === 'collectible' && !platform.collected) {
+                const cx = platform.x + platform.width/2;
+                const cy = platform.y + platform.height/2;
+                ctx.fillStyle = '#00FFFF';
+                ctx.beginPath();
+                ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.28, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#FFF';
+                ctx.stroke();
             }
              
             if (platform.type === 'jumppad') {
@@ -1098,9 +1328,15 @@ class Game {
             }
         }
         
-        ctx.fillStyle = '#FFF'; 
-        ctx.fillRect(this.player.x, this.player.y, this.player.width, this.player.height);
-        ctx.strokeRect(this.player.x, this.player.y, this.player.width, this.player.height);
+        // Draw player with fading alpha (when won)
+        if (!this.player.alpha || this.player.alpha > 0) {
+            ctx.save();
+            ctx.globalAlpha = (typeof this.player.alpha === 'number') ? this.player.alpha : 1;
+            ctx.fillStyle = '#FFF'; 
+            ctx.fillRect(this.player.x, this.player.y, this.player.width, this.player.height);
+            ctx.strokeRect(this.player.x, this.player.y, this.player.width, this.player.height);
+            ctx.restore();
+        }
 
         // draw particles on top
         if (this.particles.length > 0) {
@@ -1112,6 +1348,18 @@ class Game {
                 ctx.fill();
             }
             ctx.globalAlpha = 1;
+        }
+
+        // Draw coin counter (if enabled in exported runtime)
+        if (this.showCoinCounter) {
+            const total = this.platforms.filter(p => p.type === 'collectible').length;
+            const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(12, 12, 140, 36);
+            ctx.fillStyle = '#FFF';
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(\`Coins: \${collected} / \${total}\`, 20, 36);
         }
 
         // Win overlay for exported runtime
@@ -1137,7 +1385,50 @@ class Game {
 document.addEventListener('DOMContentLoaded', () => {
     const platforms = ${levelDataJson}.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
     const spawn = ${spawnJson};
-    new Game(platforms, spawn);
+    const __game = new Game(platforms, spawn);
+    
+    // Create / manage left side panel for coin-based win conditions
+    (function setupSidePanel() {
+        const panel = document.createElement('div');
+        panel.id = 'sidePanel';
+        panel.style.position = 'absolute';
+        panel.style.left = '12px';
+        panel.style.top = '12px';
+        panel.style.width = '220px';
+        panel.style.padding = '12px';
+        panel.style.background = 'rgba(255,255,255,0.04)';
+        panel.style.color = '#FFF';
+        panel.style.fontFamily = 'Arial, sans-serif';
+        panel.style.border = '1px solid rgba(255,255,255,0.06)';
+        panel.style.borderRadius = '6px';
+        panel.style.pointerEvents = 'none';
+        panel.style.display = (WIN_CONDITION === 'coins' || WIN_CONDITION === 'both') ? 'block' : 'none';
+        panel.innerHTML = \`
+            <div style="font-weight:600;margin-bottom:8px;color:#FFF;">Objective</div>
+            <div id="panelGoal" style="margin-bottom:6px;color:#FFF;">Collect \${COIN_GOAL} coin(s)</div>
+            <div id="panelProgress" style="font-size:14px;color:#FFF;">0 / 0 collected</div>
+            <div id="panelHint" style="margin-top:8px;font-size:12px;color:#FFF;">\${WIN_CONDITION === 'both' ? 'Touch goal after collecting.' : ''}</div>
+        \`;
+        document.body.appendChild(panel);
+
+        // Update loop for panel (keeps in sync with runtime state)
+        const updatePanel = () => {
+            const total = __game.platforms.filter(p => p.type === 'collectible').length;
+            const collected = __game.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+            const goalEl = document.getElementById('panelGoal');
+            const progEl = document.getElementById('panelProgress');
+            if (goalEl) goalEl.textContent = \`Collect \${COIN_GOAL} coin(s)\`;
+            if (progEl) progEl.textContent = \`\${collected} / \${Math.max(total, COIN_GOAL)} collected\`;
+            // hide the panel when player has won
+            if (__game.won) {
+                panel.style.display = 'none';
+            }
+        };
+        // update every 200ms — lightweight and keeps DOM in sync
+        const iv = setInterval(updatePanel, 200);
+        // clear interval if the game instance is removed
+        window.addEventListener('beforeunload', () => clearInterval(iv));
+    })();
 });
 `;
 
@@ -1163,6 +1454,7 @@ document.addEventListener('DOMContentLoaded', () => {
             font-family: Arial, sans-serif;
             overflow: hidden; /* prevent scrollbars */
         }
+        /* layout: canvas centered, allow a left panel to sit on top */
         canvas {
             border: 2px solid #fff;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
@@ -1174,7 +1466,11 @@ document.addEventListener('DOMContentLoaded', () => {
             height: auto;
             display: block;
         }
-    </style>
+        /* small responsive tweak so the panel doesn't overflow on very small viewports */
+        @media (max-width: 520px) {
+            #sidePanel { display: none !important; }
+        }
+     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
@@ -1183,6 +1479,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Level Data injected here
         window.INITIAL_LEVEL_DATA = ${levelDataJson};
         window.INITIAL_SPAWN = ${spawnJson};
+        window.INITIAL_SHOW_COIN_COUNTER = ${showCoinCounterJson};
+        window.INITIAL_WIN_CONDITION = ${winConditionJson};
+        window.INITIAL_COIN_GOAL = ${coinGoalJson};
     </script>
 
     <script>
