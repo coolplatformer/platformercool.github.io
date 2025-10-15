@@ -38,7 +38,14 @@ class Game {
         const initialPlatforms = window.INITIAL_LEVEL_DATA
             ? window.INITIAL_LEVEL_DATA.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable))
             : [new Platform(0, canvas.height - this.gridSize, canvas.width, this.gridSize)];
-        this.platforms = initialPlatforms;
+        // Room system: store rooms as array of { platforms, spawn }
+        this.rooms = [];
+        const initialSpawn = window.INITIAL_SPAWN ? { x: window.INITIAL_SPAWN.x, y: window.INITIAL_SPAWN.y } : defaultSpawn;
+        this.rooms.push({ platforms: initialPlatforms, spawn: initialSpawn });
+        this.currentRoom = 0;
+        // active references used by existing logic
+        this.platforms = this.rooms[this.currentRoom].platforms;
+        this.spawn = this.rooms[this.currentRoom].spawn;
         
         // place player at spawn
         this.resetPlayerToSpawn();
@@ -69,11 +76,24 @@ class Game {
             const undoBtn = document.getElementById('undoBtn');
             const redoBtn = document.getElementById('redoBtn');
             const clearBtn = document.getElementById('clearBtn');
+            const prevRoomBtn = document.getElementById('prevRoomBtn');
+            const nextRoomBtn = document.getElementById('nextRoomBtn');
+            const newRoomBtn = document.getElementById('newRoomBtn');
+            const deleteRoomBtn = document.getElementById('deleteRoomBtn');
+            const roomLabel = document.getElementById('roomLabel');
             const movingToggle = document.getElementById('movingToggle');
             const moveInc = document.getElementById('moveInc');
             const moveDec = document.getElementById('moveDec');
             const moveSpeedDisplay = document.getElementById('moveSpeed');
             const toolButtons = document.querySelectorAll('.tool-btn');
+            const updateRoomLabel = () => {
+                if (roomLabel) roomLabel.textContent = `Room ${this.currentRoom + 1} / ${this.rooms.length}`;
+            };
+            updateRoomLabel();
+            if (prevRoomBtn) prevRoomBtn.addEventListener('click', () => { this.switchRoom(this.currentRoom - 1); updateRoomLabel(); });
+            if (nextRoomBtn) nextRoomBtn.addEventListener('click', () => { this.switchRoom(this.currentRoom + 1); updateRoomLabel(); });
+            if (newRoomBtn) newRoomBtn.addEventListener('click', () => { this.createRoom(); updateRoomLabel(); });
+            if (deleteRoomBtn) deleteRoomBtn.addEventListener('click', () => { this.deleteRoom(); updateRoomLabel(); });
             toolButtons.forEach(b => b.addEventListener('click', (ev) => {
                 this.currentTool = ev.currentTarget.getAttribute('data-tool') || 'block';
             }));
@@ -128,6 +148,7 @@ class Game {
                 if (key === '3') this.currentTool = 'jumppad';
                 if (key === '4') this.currentTool = 'flag';
                 if (key === '5') this.currentTool = 'collectible';
+                if (key === '6') this.currentTool = 'door';
                 if (key === 'e') this.currentTool = 'eraser';
                 if (key === 'g') this.togglePlayMode(); // Toggle G for Game/Editor mode
                 if (key === 'x') this.exportLevel(); // Export level
@@ -136,9 +157,13 @@ class Game {
                 }
                 if (key === 'p') { // set spawn at current cursor/grid location
                     const coords = this.getGridCoords(this.mouse.x, this.mouse.y);
-                    this.spawn = { x: coords.x, y: coords.y };
-                    this.pushHistory();
-                }
+                    // store spawn per-room so each room can have its own spawn point
+                    if (this.rooms && this.rooms[this.currentRoom]) {
+                        this.rooms[this.currentRoom].spawn = { x: coords.x, y: coords.y };
+                        this.spawn = this.rooms[this.currentRoom].spawn;
+                        this.pushHistory();
+                    }
+                 }
             } else {
                 if (key === 'g') this.togglePlayMode(); // Toggle G for Game/Editor mode
             }
@@ -243,10 +268,13 @@ class Game {
     }
 
     pushHistory() {
-        // Serialize platforms and spawn
+        // Serialize full rooms state (platforms + spawn) and current room index
         const snap = {
-            platforms: this.platforms.map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height, type: p.type, vx: p.vx || 0, vy: p.vy || 0, collidable: typeof p.collidable === 'undefined' ? true : p.collidable })),
-            spawn: { x: this.spawn.x, y: this.spawn.y }
+            rooms: this.rooms.map(r => ({
+                platforms: r.platforms.map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height, type: p.type, vx: p.vx || 0, vy: p.vy || 0, collidable: typeof p.collidable === 'undefined' ? true : p.collidable })),
+                spawn: { x: r.spawn.x, y: r.spawn.y }
+            })),
+            currentRoom: this.currentRoom
         };
         this.history.push(snap);
         // cap history to avoid memory blowup
@@ -261,8 +289,14 @@ class Game {
         const current = this.history.pop();
         this.redoStack.push(current);
         const prev = this.history[this.history.length - 1];
-        this.platforms = prev.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
-        this.spawn = { x: prev.spawn.x, y: prev.spawn.y };
+        // restore rooms and current room index
+        this.rooms = prev.rooms.map(r => ({
+            platforms: r.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable)),
+            spawn: { x: r.spawn.x, y: r.spawn.y }
+        }));
+        this.currentRoom = typeof prev.currentRoom === 'number' ? prev.currentRoom : 0;
+        this.platforms = this.rooms[this.currentRoom].platforms;
+        this.spawn = this.rooms[this.currentRoom].spawn;
         this.resetPlayerToSpawn();
         this.updateButtons();
     }
@@ -271,8 +305,13 @@ class Game {
         if (this.redoStack.length === 0) return;
         const next = this.redoStack.pop();
         this.history.push(next);
-        this.platforms = next.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
-        this.spawn = { x: next.spawn.x, y: next.spawn.y };
+        this.rooms = next.rooms.map(r => ({
+            platforms: r.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable)),
+            spawn: { x: r.spawn.x, y: r.spawn.y }
+        }));
+        this.currentRoom = typeof next.currentRoom === 'number' ? next.currentRoom : 0;
+        this.platforms = this.rooms[this.currentRoom].platforms;
+        this.spawn = this.rooms[this.currentRoom].spawn;
         this.resetPlayerToSpawn();
         this.updateButtons();
     }
@@ -280,7 +319,9 @@ class Game {
     clearLevel() {
         if (this.platforms.length === 0 && (!this.spawn || (this.spawn.x === 0 && this.spawn.y === 0))) return;
         // reset platforms but keep spawn at current grid origin
-        this.platforms = [];
+        // clear the current room's platforms only
+        this.rooms[this.currentRoom].platforms = [];
+        this.platforms = this.rooms[this.currentRoom].platforms;
         this.pushHistory();
     }
 
@@ -297,17 +338,45 @@ class Game {
         // Reset player state when toggling modes
         this.resetPlayerToSpawn();
         // Reset all platforms back to their original placed positions when toggling modes
-        for (let p of this.platforms) {
-            if (typeof p.initialX !== 'undefined') {
-                p.x = p.initialX;
-                p.y = p.initialY;
-               // restore original movement direction/speed
-               if (typeof p.initialVx !== 'undefined') p.vx = p.initialVx;
-               if (typeof p.initialVy !== 'undefined') p.vy = p.initialVy;
-               // restore collected state on mode toggle (put collectibles back)
-               if (p.type === 'collectible') p.collected = false;
+        for (let r of this.rooms) {
+            for (let p of r.platforms) {
+                if (typeof p.initialX !== 'undefined') {
+                    p.x = p.initialX;
+                    p.y = p.initialY;
+                    // restore original movement direction/speed
+                    if (typeof p.initialVx !== 'undefined') p.vx = p.initialVx;
+                    if (typeof p.initialVy !== 'undefined') p.vy = p.initialVy;
+                    // restore collected state on mode toggle (put collectibles back)
+                    if (p.type === 'collectible') p.collected = false;
+                }
             }
         }
+    }
+    
+    createRoom() {
+        // new empty room copies the grid-aligned spawn from current room
+        const newSpawn = { x: this.spawn.x, y: this.spawn.y };
+        const newPlatforms = [];
+        this.rooms.push({ platforms: newPlatforms, spawn: newSpawn });
+        this.switchRoom(this.rooms.length - 1);
+        this.pushHistory();
+    }
+
+    deleteRoom() {
+        if (this.rooms.length <= 1) return;
+        this.rooms.splice(this.currentRoom, 1);
+        const newIndex = Math.max(0, this.currentRoom - 1);
+        this.switchRoom(newIndex);
+        this.pushHistory();
+    }
+
+    switchRoom(index) {
+        if (index < 0 || index >= this.rooms.length) return;
+        this.currentRoom = index;
+        // switch active references to preserve all existing logic
+        this.platforms = this.rooms[this.currentRoom].platforms;
+        this.spawn = this.rooms[this.currentRoom].spawn;
+        this.resetPlayerToSpawn();
     }
     
     update() {
@@ -429,6 +498,22 @@ class Game {
                             continue;
                         }
                     }
+                    
+                    // use aggregated collectible count across all rooms (editor or exported runtime)
+                    // fallthrough continues if win triggered above
+                }                
+                
+                // Door: move player to next room's spawn (editor/playtesting)
+                if (platform.type === 'door') {
+                    // only switch if there is another room
+                    const nextIndex = Math.min(this.rooms.length - 1, this.currentRoom + 1);
+                    if (nextIndex !== this.currentRoom && this.rooms[nextIndex]) {
+                        this.switchRoom(nextIndex);
+                        this.resetPlayerToSpawn(); // place player at new room spawn
+                        return;
+                    }
+                    // if no next room, do nothing
+                    continue;
                 }
                 
                 // Collectible: pick up and remove immediately (only in play mode)
@@ -522,9 +607,10 @@ class Game {
             const winCond = window.INITIAL_WIN_CONDITION || this.winCondition;
             const coinGoal = (typeof window.INITIAL_COIN_GOAL === 'number') ? window.INITIAL_COIN_GOAL : (parseInt(window.INITIAL_COIN_GOAL) || this.coinGoal || 1);
             // Only auto-win on coins when win condition is explicitly "coins".
-            // For "both" we must still touch the flag to win.
+            // Aggregate collectible state across all rooms so counter is consistent across rooms.
             if (winCond === 'coins') {
-                const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+                const allPlatforms = (this.rooms || []).reduce((acc, r) => acc.concat(r.platforms || []), []);
+                const collected = allPlatforms.filter(p => p.type === 'collectible' && p.collected).length;
                 if (collected >= coinGoal) {
                     this.won = true;
                 }
@@ -533,7 +619,8 @@ class Game {
             // in editor playtesting, also allow coins win if editor selected that mode
             // Only auto-win on coins in editor when explicitly set to "coins"
             if (!this.isExported && this.winCondition === 'coins') {
-                const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+                const allPlatforms = (this.rooms || []).reduce((acc, r) => acc.concat(r.platforms || []), []);
+                const collected = allPlatforms.filter(p => p.type === 'collectible' && p.collected).length;
                 if (collected >= (this.coinGoal || 1)) {
                     this.won = true;
                 }
@@ -618,6 +705,15 @@ class Game {
                 ctx.fill();
             }
 
+            // Draw Door visual: slim tall rectangle with dark fill and light outline (match editor)
+            if (platform.type === 'door') {
+                ctx.fillStyle = '#222'; // dark interior
+                ctx.fillRect(platform.x + platform.width*0.15, platform.y + platform.height*0.05, platform.width*0.7, platform.height*0.9);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#AAA';
+                ctx.strokeRect(platform.x + platform.width*0.15, platform.y + platform.height*0.05, platform.width*0.7, platform.height*0.9);
+            }
+
             // Draw Collectible visual: small cyan circle centered in the cell
             if (platform.type === 'collectible' && !platform.collected) {
                 const cx = platform.x + platform.width/2;
@@ -673,8 +769,10 @@ class Game {
 
         // Draw coin counter (if enabled)
         if (this.showCoinCounter) {
-            const total = this.platforms.filter(p => p.type === 'collectible').length;
-            const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+            // aggregate across all rooms so the counter is consistent between rooms
+            const allPlatforms = this.rooms.reduce((acc, r) => acc.concat(r.platforms || []), []);
+            const total = allPlatforms.filter(p => p.type === 'collectible').length;
+            const collected = allPlatforms.filter(p => p.type === 'collectible' && p.collected).length;
             ctx.fillStyle = 'rgba(0,0,0,0.6)';
             ctx.fillRect(12, 12, 140, 36);
             ctx.fillStyle = '#FFF';
@@ -802,6 +900,14 @@ class Game {
             ctx.strokeStyle = '#FFF';
             ctx.stroke();
         }
+        else if (this.currentTool === 'door') {
+            // door preview: slim dark rectangle with light border centered in cell
+            ctx.fillStyle = 'rgba(34,34,34,0.9)';
+            ctx.fillRect(gx + w*0.15, gy + h*0.05, w*0.7, h*0.9);
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#AAA';
+            ctx.strokeRect(gx + w*0.15, gy + h*0.05, w*0.7, h*0.9);
+        }
 
         // HUD moved to HTML instructions panel (left). Canvas HUD text removed for clarity.
     }
@@ -823,6 +929,8 @@ class Game {
     resetPlayerToSpawn(death = false) {
         if (death) this.attempts++;
         // place player at spawn (top-left of the player aligned to spawn cell)
+        // ensure spawn is the active room's spawn
+        if (this.rooms && this.rooms[this.currentRoom]) this.spawn = this.rooms[this.currentRoom].spawn;
         this.player.x = this.spawn.x;
         this.player.y = this.spawn.y - (this.player.height - this.gridSize); // align player bottom to top of spawn cell if needed
         // ensure player stays in bounds
@@ -833,14 +941,16 @@ class Game {
         this.player.onGround = false;
         // On death, also reset moving platforms back to their original position and direction
         if (death) {
-            for (let p of this.platforms) {
-                if (typeof p.initialX !== 'undefined') {
-                    p.x = p.initialX;
-                    p.y = p.initialY;
-                    if (typeof p.initialVx !== 'undefined') p.vx = p.initialVx;
-                    if (typeof p.initialVy !== 'undefined') p.vy = p.initialVy;
-                    // restore collected collectibles on death
-                    if (p.type === 'collectible') p.collected = false;
+            for (let r of this.rooms) {
+                for (let p of r.platforms) {
+                    if (typeof p.initialX !== 'undefined') {
+                        p.x = p.initialX;
+                        p.y = p.initialY;
+                        if (typeof p.initialVx !== 'undefined') p.vx = p.initialVx;
+                        if (typeof p.initialVy !== 'undefined') p.vy = p.initialVy;
+                        // restore collected collectibles on death
+                        if (p.type === 'collectible') p.collected = false;
+                    }
                 }
             }
         }
@@ -879,23 +989,19 @@ class Game {
     
     // Export Level implementation
     exportLevel() {
-        const exportedPlatforms = this.platforms.map(p => ({
-            x: p.x,
-            y: p.y,
-            width: p.width,
-            height: p.height,
-            type: p.type,
-            vx: p.vx || 0,
-            collidable: typeof p.collidable === 'undefined' ? true : p.collidable,
-            vy: p.vy || 0
+        // Export full rooms array
+        const exportedRooms = this.rooms.map(r => ({
+            platforms: r.platforms.map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height, type: p.type, vx: p.vx || 0, vy: p.vy || 0, collidable: typeof p.collidable === 'undefined' ? true : p.collidable })),
+            spawn: { x: r.spawn.x, y: r.spawn.y }
         }));
         
-        const levelDataJson = JSON.stringify(exportedPlatforms, null, 2);
-        const spawnJson = JSON.stringify({ x: this.spawn.x, y: this.spawn.y });
+        const levelDataJson = JSON.stringify(exportedRooms, null, 2);
+        const spawnJson = JSON.stringify(this.rooms[this.currentRoom].spawn);
         const showCoinCounterJson = JSON.stringify(!!this.showCoinCounter);
         const winConditionJson = JSON.stringify(this.winCondition || 'flag');
         const coinGoalJson = JSON.stringify(this.coinGoal || 1);
 
+        // NOTE: runtime injection expects INITIAL_LEVEL_DATA shaped as array of rooms
         // --- Start Runtime Game Code Definition ---
         const runtimeGameContent = `const GRAVITY = 0.5;
 const FRICTION = 0.8;
@@ -958,16 +1064,20 @@ class Player {
 
 
 class Game {
-    constructor(platformsData, spawnData) {
-        this.player = new Player(spawnData.x, spawnData.y);
-        this.platforms = platformsData.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
+    constructor() {
+        // support multiple rooms: window.INITIAL_LEVEL_DATA is expected to be an array of rooms { platforms: [...], spawn: {x,y} }
+        window.__rooms = window.INITIAL_LEVEL_DATA || window.__rooms || [];
+        window.__currentRoom = (typeof window.__currentRoom === 'number') ? window.__currentRoom : 0;
+        const room = (window.__rooms && window.__rooms[window.__currentRoom]) || { platforms: [], spawn: { x: 0, y: 0 } };
+        this.player = new Player(room.spawn.x, room.spawn.y);
+        this.platforms = (room.platforms || []).map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
         this.input = new InputHandler();
         this.keys = {};
         this.attempts = 0;
         this.won = false;
         // particle system
         this.particles = [];
-        this.spawn = { x: spawnData.x, y: spawnData.y };
+        this.spawn = { x: room.spawn.x, y: room.spawn.y };
         this.showCoinCounter = SHOW_COIN_COUNTER;
         
         this.setupEventListeners();
@@ -1110,6 +1220,18 @@ class Game {
                     if (!platform.collected) {
                         this.spawnDeathParticles(platform.x + platform.width/2, platform.y + platform.height/2, 10);
                         platform.collected = true;
+                        // sync collected state to the global rooms data so counters aggregate across rooms
+                        if (window.__rooms && typeof window.__currentRoom === 'number') {
+                            const roomPlatforms = window.__rooms[window.__currentRoom] && window.__rooms[window.__currentRoom].platforms;
+                            if (roomPlatforms) {
+                                for (let rp of roomPlatforms) {
+                                    if (rp.x === platform.x && rp.y === platform.y && rp.width === platform.width && rp.height === platform.height && rp.type === platform.type) {
+                                        rp.collected = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
                     // do not perform collision resolution for collectibles
                     continue;
@@ -1134,7 +1256,9 @@ class Game {
                         this.won = true;
                         return;
                     } else if (WIN_CONDITION === 'both') {
-                        const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+                        // aggregate collected across all rooms
+                        const allPlatforms = (window.__rooms || []).reduce((acc, r) => acc.concat(r.platforms || []), []);
+                        const collected = allPlatforms.filter(p => p.type === 'collectible' && p.collected).length;
                         if (collected >= COIN_GOAL) {
                             this.player.x = platform.x;
                             this.player.y = platform.y - this.player.height;
@@ -1148,6 +1272,25 @@ class Game {
                     } else {
                         continue;
                     }
+                }
+                // Door handling in exported runtime: advance to next room if available
+                if (platform.type === 'door') {
+                    if (window.INITIAL_LEVEL_DATA && Array.isArray(window.INITIAL_LEVEL_DATA) && window.INITIAL_LEVEL_DATA.length > 0) {
+                        window.__currentRoom = (typeof window.__currentRoom === 'number') ? window.__currentRoom : 0;
+                        const next = window.__currentRoom + 1;
+                        if (next < window.INITIAL_LEVEL_DATA.length) {
+                            window.__currentRoom = next;
+                            // load next room platforms and spawn into the running instance
+                            if (window.__gameInstance) {
+                                const room = window.INITIAL_LEVEL_DATA[window.__currentRoom];
+                                window.__gameInstance.platforms = room.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
+                                window.__gameInstance.spawn = { x: room.spawn.x, y: room.spawn.y };
+                                window.__gameInstance.resetPlayerToSpawnDeath();
+                            }
+                            return;
+                        }
+                    }
+                    continue;
                 }
                 // Robust AABB overlap resolution for solid platforms (block / jumppad)
                 if (platform.type === 'block' || platform.type === 'jumppad' || platform.type === 'semisolid') {
@@ -1224,12 +1367,13 @@ class Game {
         // Only auto-win on coins when WIN_CONDITION is explicitly "coins".
         // If WIN_CONDITION is "both", the player must still touch the flag after collecting coins.
         if (WIN_CONDITION === 'coins') {
-            const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+            const allPlatforms = (window.__rooms || []).reduce((acc, r) => acc.concat(r.platforms || []), []);
+            const collected = allPlatforms.filter(p => p.type === 'collectible' && p.collected).length;
             if (collected >= COIN_GOAL) {
                 this.won = true;
             }
         }
-
+        
         // update particles each frame
         this.updateParticles();
     }
@@ -1268,6 +1412,15 @@ class Game {
                 ctx.beginPath();
                 ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.22, 0, Math.PI * 2);
                 ctx.fill();
+            }
+
+            // Draw Door visual: slim tall rectangle with dark fill and light outline (match editor)
+            if (platform.type === 'door') {
+                ctx.fillStyle = '#222'; // dark interior
+                ctx.fillRect(platform.x + platform.width*0.15, platform.y + platform.height*0.05, platform.width*0.7, platform.height*0.9);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#AAA';
+                ctx.strokeRect(platform.x + platform.width*0.15, platform.y + platform.height*0.05, platform.width*0.7, platform.height*0.9);
             }
 
             if (platform.type === 'spike') {
@@ -1383,9 +1536,12 @@ class Game {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const platforms = ${levelDataJson}.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
-    const spawn = ${spawnJson};
-    const __game = new Game(platforms, spawn);
+    // initialize rooms and start game instance that will load room 0
+    window.__rooms = ${levelDataJson};
+    window.__currentRoom = 0;
+    const __game = new Game();
+    
+    window.__gameInstance = __game;
     
     // Create / manage left side panel for coin-based win conditions
     (function setupSidePanel() {
@@ -1413,8 +1569,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Update loop for panel (keeps in sync with runtime state)
         const updatePanel = () => {
-            const total = __game.platforms.filter(p => p.type === 'collectible').length;
-            const collected = __game.platforms.filter(p => p.type === 'collectible' && p.collected).length;
+            // aggregate across all rooms to keep counter consistent across rooms
+            const allPlatforms = (window.__rooms || []).reduce((acc, r) => acc.concat(r.platforms || []), []);
+            const total = allPlatforms.filter(p => p.type === 'collectible').length;
+            const collected = allPlatforms.filter(p => p.type === 'collectible' && p.collected).length;
             const goalEl = document.getElementById('panelGoal');
             const progEl = document.getElementById('panelProgress');
             if (goalEl) goalEl.textContent = \`Collect \${COIN_GOAL} coin(s)\`;
@@ -1477,7 +1635,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     <script>
         // Level Data injected here
+        // INITIAL_LEVEL_DATA is an array of rooms: [{ platforms: [...], spawn: {x,y} }, ...]
         window.INITIAL_LEVEL_DATA = ${levelDataJson};
+        // provide INITIAL_SPAWN as the spawn of first room for compatibility
         window.INITIAL_SPAWN = ${spawnJson};
         window.INITIAL_SHOW_COIN_COUNTER = ${showCoinCounterJson};
         window.INITIAL_WIN_CONDITION = ${winConditionJson};
@@ -1536,6 +1696,7 @@ if (!window.INITIAL_LEVEL_DATA) {
     // Exported runtime: use provided INITIAL_LEVEL_DATA and INITIAL_SPAWN
     const platforms = window.INITIAL_LEVEL_DATA.map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height, type: p.type }));
     const spawn = { x: window.INITIAL_SPAWN.x, y: window.INITIAL_SPAWN.y };
+    window.__currentRoom = 0; // initialize current room index for exported runtime navigation
     window.__gameInstance = new Game();
     // If the exported runtime expects the Game to be constructed with data, call update on instance
     // For compatibility, replace platforms and spawn on the instance if present

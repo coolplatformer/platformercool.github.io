@@ -79,6 +79,7 @@
                     <button class="tool-btn" data-tool="semisolid">Semisolid</button>
                     <button class="tool-btn" data-tool="flag">Win</button>
                     <button class="tool-btn" data-tool="collectible">Collectible</button>
+                    <button class="tool-btn" data-tool="door">Door</button>
                     <button class="tool-btn" data-tool="eraser">Eraser</button>
                 </div>
                 <ul style="margin:8px 0 0 16px;font-size:13px;line-height:1.4;">
@@ -96,6 +97,17 @@
             <button id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
             <button id="redoBtn" title="Redo (Ctrl+Y)">Redo</button>
             <button id="clearBtn" title="Clear Level">Clear</button>
+           <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;color:#fff;font-size:13px;">
+               <div style="display:flex;gap:6px;align-items:center;">
+                   <button id="prevRoomBtn" title="Previous Room">&larr;</button>
+                   <div id="roomLabel" style="min-width:120px;text-align:center;">Room 1 / 1</div>
+                   <button id="nextRoomBtn" title="Next Room">&rarr;</button>
+               </div>
+               <div style="display:flex;gap:6px;">
+                   <button id="newRoomBtn">New Room</button>
+                   <button id="deleteRoomBtn">Delete Room</button>
+               </div>
+           </div>
            <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;color:#fff;font-size:13px;">
                <label style="display:flex;align-items:center;gap:8px;">
                    <input type="checkbox" id="movingToggle"> Make placed objects move
@@ -106,7 +118,7 @@
                    </div>
                </label>
                <label style="display:flex;align-items:center;gap:8px;">
-                   <input type="checkbox" id="showCoinCounter"> Show coin counter
+                   <input type="checkbox" id="showCoinCounter"> Show collectible counter
                </label>
               <label style="display:flex;align-items:center;gap:8px;">
                   <input type="checkbox" id="movingCollidable" checked> Collidable when placed
