@@ -79,6 +79,7 @@
                     <button class="tool-btn" data-tool="semisolid">Semisolid</button>
                     <button class="tool-btn" data-tool="flag">Win</button>
                     <button class="tool-btn" data-tool="collectible">Collectible</button>
+                    <button class="tool-btn" data-tool="jumporb">Jump Orb</button>
                     <button class="tool-btn" data-tool="switch">Switch</button>
                     <button class="tool-btn" data-tool="switchblock">Red Switch Block</button>
                     <button class="tool-btn" data-tool="blueswitchblock">Blue Switch Block</button>
@@ -112,12 +113,14 @@
                </div>
            </div>
            <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;color:#fff;font-size:13px;">
+              <button id="autoRunBtn" title="Toggle Auto-run for current room">Auto-run: Off</button>
                <label style="display:flex;align-items:center;gap:8px;">
-                   <input type="checkbox" id="movingToggle"> Make placed objects move
+                   <input type="checkbox" id="movingToggle"> Make placed object move
                    <div style="display:inline-flex;align-items:center;gap:6px;margin-left:8px;">
                        <button id="moveDec">-</button>
                        <div id="moveSpeed" style="min-width:36px;text-align:center;color:#fff;">1</div>
                        <button id="moveInc">+</button>
+                      <button id="moveDirBtn" title="Toggle moving object initial direction">→</button>
                    </div>
                </label>
                <label style="display:flex;align-items:center;gap:8px;">

@@ -7,7 +7,7 @@ export class Player {
         this.velocityX = 0;
         this.velocityY = 0;
         this.speed = 0.9;
-        this.jumpPower = 10;
+        this.jumpPower = 10.1;
         this.onGround = false;
     }
 }

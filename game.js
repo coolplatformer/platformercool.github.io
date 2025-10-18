@@ -65,12 +65,15 @@ class Game {
         // UI toggle states for placing moving blocks
         this.placeMoving = false;
         this.movingSpeed = 1;
+        this.placeMovingDirection = 1; // 1 = right, -1 = left
         this.placeCollidable = true;
         this.collectedCount = 0;
         this.showCoinCounter = false;
         this.winCondition = 'flag'; // 'flag' | 'coins' | 'none'
         this.coinGoal = 1; // new: number of coins required to win
+        this.collisionBuffer = 2; // buffer/pixel tolerance to avoid accidental tiny-collisions
         this.switchOn = false; // shared switch state across all switches
+        this.autoRunner = false; // per-room auto-run flag (editor/runtime)
 
         // Transition state for room changes (door)
         this.transitioning = false;
@@ -81,6 +84,7 @@ class Game {
 
         // Hook UI buttons
         window.addEventListener('DOMContentLoaded', () => {
+            const autoRunBtn = document.getElementById('autoRunBtn');
             const undoBtn = document.getElementById('undoBtn');
             const redoBtn = document.getElementById('redoBtn');
             const clearBtn = document.getElementById('clearBtn');
@@ -130,7 +134,30 @@ class Game {
             }
             if (moveInc) moveInc.addEventListener('click', () => { this.movingSpeed = Math.min(6, this.movingSpeed + 1); moveSpeedDisplay.textContent = this.movingSpeed; });
             if (moveDec) moveDec.addEventListener('click', () => { this.movingSpeed = Math.max(0, this.movingSpeed - 1); moveSpeedDisplay.textContent = this.movingSpeed; });
-            const coinGoalInput = document.getElementById('coinGoalInput');
+            const moveDirBtn = document.getElementById('moveDirBtn');
+            if (moveDirBtn) {
+                moveDirBtn.addEventListener('click', () => {
+                    this.placeMovingDirection = -this.placeMovingDirection;
+                    moveDirBtn.textContent = this.placeMovingDirection === 1 ? '→' : '←';
+                });
+            }
+            if (autoRunBtn) {
+                autoRunBtn.addEventListener('click', () => {
+                    // toggle auto-run for the current room and update label
+                    this.autoRunner = !this.autoRunner;
+                    autoRunBtn.textContent = `Auto-run: ${this.autoRunner ? 'On' : 'Off'}`;
+                    // store per-room flag
+                    if (this.rooms && this.rooms[this.currentRoom]) {
+                        this.rooms[this.currentRoom].autoRunner = this.autoRunner;
+                    }
+                    this.pushHistory();
+                });
+                // initialize label from current room data if present
+                if (this.rooms && this.rooms[this.currentRoom] && typeof this.rooms[this.currentRoom].autoRunner === 'boolean') {
+                    this.autoRunner = this.rooms[this.currentRoom].autoRunner;
+                    autoRunBtn.textContent = `Auto-run: ${this.autoRunner ? 'On' : 'Off'}`;
+                }
+            }
             if (coinGoalInput) {
                 coinGoalInput.value = this.coinGoal;
                 coinGoalInput.addEventListener('change', (e) => {
@@ -271,7 +298,7 @@ class Game {
             // Add new object
             // if placing moving is enabled, give initial horizontal velocity regardless of object type
             let vx = 0, vy = 0;
-            if (this.placeMoving) vx = this.movingSpeed;
+            if (this.placeMoving) vx = this.movingSpeed * (this.placeMovingDirection || 1);
             this.platforms.push(new Platform(x, y, w, h, this.currentTool, vx, vy, !!this.placeCollidable));
             // If placing a switch, initialize it as ON and ensure global switch state reflects that
             if (this.currentTool === 'switch') {
@@ -289,7 +316,8 @@ class Game {
         const snap = {
             rooms: this.rooms.map(r => ({
                 platforms: r.platforms.map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height, type: p.type, vx: p.vx || 0, vy: p.vy || 0, collidable: typeof p.collidable === 'undefined' ? true : p.collidable })),
-                spawn: { x: r.spawn.x, y: r.spawn.y }
+                spawn: { x: r.spawn.x, y: r.spawn.y },
+                autoRunner: !!r.autoRunner
             })),
             currentRoom: this.currentRoom
         };
@@ -309,7 +337,8 @@ class Game {
         // restore rooms and current room index
         this.rooms = prev.rooms.map(r => ({
             platforms: r.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable)),
-            spawn: { x: r.spawn.x, y: r.spawn.y }
+            spawn: { x: r.spawn.x, y: r.spawn.y },
+            autoRunner: !!r.autoRunner
         }));
         this.currentRoom = typeof prev.currentRoom === 'number' ? prev.currentRoom : 0;
         this.platforms = this.rooms[this.currentRoom].platforms;
@@ -324,7 +353,8 @@ class Game {
         this.history.push(next);
         this.rooms = next.rooms.map(r => ({
             platforms: r.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable)),
-            spawn: { x: r.spawn.x, y: r.spawn.y }
+            spawn: { x: r.spawn.x, y: r.spawn.y },
+            autoRunner: !!r.autoRunner
         }));
         this.currentRoom = typeof next.currentRoom === 'number' ? next.currentRoom : 0;
         this.platforms = this.rooms[this.currentRoom].platforms;
@@ -381,7 +411,7 @@ class Game {
         // new empty room copies the grid-aligned spawn from current room
         const newSpawn = { x: this.spawn.x, y: this.spawn.y };
         const newPlatforms = [];
-        this.rooms.push({ platforms: newPlatforms, spawn: newSpawn });
+        this.rooms.push({ platforms: newPlatforms, spawn: newSpawn, autoRunner: false });
         this.switchRoom(this.rooms.length - 1);
         this.pushHistory();
     }
@@ -401,6 +431,18 @@ class Game {
         this.platforms = this.rooms[this.currentRoom].platforms;
         this.spawn = this.rooms[this.currentRoom].spawn;
         this.resetPlayerToSpawn();
+        // restore per-room auto-run flag (default false)
+        this.autoRunner = !!this.rooms[this.currentRoom].autoRunner;
+        const autoRunBtn = document.getElementById && document.getElementById('autoRunBtn');
+        if (autoRunBtn) autoRunBtn.textContent = `Auto-run: ${this.autoRunner ? 'On' : 'Off'}`;
+        
+        // ensure shared switch state defaults to ON when entering any room and propagate to all switches
+        this.switchOn = true;
+        for (let r of this.rooms) {
+            for (let sp of r.platforms) {
+                if (sp.type === 'switch') sp.on = true;
+            }
+        }
     }
     
     // initiate a fade transition to another room index
@@ -462,11 +504,16 @@ class Game {
         if (this.won) return; // stop updates after win
 
         // Handle input
-        if (this.keys['arrowleft'] || this.keys['a']) {
-            this.player.velocityX -= this.player.speed;
-        }
-        if (this.keys['arrowright'] || this.keys['d']) {
-            this.player.velocityX += this.player.speed;
+        // Auto-run mode: always push right; ignore left input
+        if (this.autoRunner) {
+            this.player.velocityX += this.player.speed * 0.9; // slightly reduced acceleration smoothing
+        } else {
+            if (this.keys['arrowleft'] || this.keys['a']) {
+                this.player.velocityX -= this.player.speed;
+            }
+            if (this.keys['arrowright'] || this.keys['d']) {
+                this.player.velocityX += this.player.speed;
+            }
         }
         if ((this.keys[' '] || this.keys['arrowup'] || this.keys['w']) && this.player.onGround) {
             this.player.velocityY = -this.player.jumpPower;
@@ -505,6 +552,8 @@ class Game {
                     if (!q.collidable) continue;
                     // skip switchblocks/blueswitchblocks when they are currently non-collidable due to shared switch state
                     if ((q.type === 'switchblock' && !this.switchOn) || (q.type === 'blueswitchblock' && this.switchOn)) continue;
+                                      // moving objects should pass through flags, semisolids, collectibles and doors
+                    if (q.type === 'flag' || q.type === 'semisolid' || q.type === 'collectible' || q.type === 'door') continue;
                     if (p.x < q.x + q.width && p.x + p.width > q.x &&
                         p.y < q.y + q.height && p.y + p.height > q.y) {
                         collided = true;
@@ -561,20 +610,9 @@ class Game {
                             continue;
                         }
                     } else {
-                        // In editor/playtesting runtime, allow win on touching the flag when editor is set to 'flag'
-                        // or when set to 'both' AND the required coinGoal has been collected.
-                        const collected = this.platforms.filter(p => p.type === 'collectible' && p.collected).length;
-                        if (this.winCondition === 'flag' || (this.winCondition === 'both' && collected >= (this.coinGoal || 1))) {
-                            this.won = true;
-                            this.player.x = platform.x;
-                            this.player.y = platform.y - this.player.height;
-                            this.player.velocityX = 0;
-                            this.player.velocityY = 0;
-                            return;
-                        } else {
-                            // treat as decorative until conditions met
-                            continue;
-                        }
+                        // In editor/playtesting runtime, touching the flag should not mark the level as won.
+                        // Treat the flag as decorative in editor mode.
+                        continue;
                     }
                     
                     // use aggregated collectible count across all rooms (editor or exported runtime)
@@ -606,6 +644,18 @@ class Game {
                     continue;
                 }
                 
+                // Jump Orb: trigger an upward boost like a jumppad but do not act as a solid (player passes through)
+                if (platform.type === 'jumporb') {
+                    // only activate if the player is pressing jump while touching the orb
+                    if (this.input.isJustPressed(' ') || this.input.isJustPressed('arrowup') || this.input.isJustPressed('w')) {
+                        this.player.velocityY = -this.player.jumpPower * 1.15;
+                        this.player.onGround = false;
+                        this.spawnDeathParticles(platform.x + platform.width/2, platform.y + platform.height/2, 8);
+                    }
+                    // orb remains non-solid regardless of activation
+                    continue;
+                }
+                
                 // If it's a solid object (block or jumppad) use robust AABB penetration resolution
                 if (platform.type === 'block' || platform.type === 'jumppad' || platform.type === 'semisolid' || platform.type === 'switchblock' || platform.type === 'blueswitchblock') {
                     const overlapX1 = (this.player.x + this.player.width) - platform.x;
@@ -623,7 +673,7 @@ class Game {
                             continue;
                         }
                         // only resolve if player's previous bottom was <= platform top (landing onto it)
-                        if (prevBottom <= platform.y && overlapY <= overlapX) {
+                        if (prevBottom <= platform.y && overlapY <= overlapX - this.collisionBuffer) {
                             // allow normal vertical resolution below
                         } else if (prevBottom <= platform.y && overlapX < overlapY) {
                             // horizontal resolution (rare) still handled below
@@ -632,7 +682,7 @@ class Game {
                         }
                     }
                     
-                    if (overlapX < overlapY) {
+                    if (overlapX + this.collisionBuffer < overlapY) {
                         // resolve horizontally
                         if (overlapX1 < overlapX2) {
                             this.player.x = platform.x - this.player.width;
@@ -724,6 +774,13 @@ class Game {
             this.resetPlayerToSpawn(true);
         }
 
+        // Auto-run death: if auto-run is enabled and horizontal movement stalls (no x movement), count as death
+        if (this.autoRunner && Math.abs(this.player.velocityX) < 0.01) {
+            this.spawnDeathParticles(this.player.x + this.player.width/2, this.player.y + this.player.height/2);
+            this.resetPlayerToSpawn(true);
+            return;
+        }
+
         // after collision loop, check coins win condition in play mode for exported runtime
         if (this.isExported) {
             const winCond = window.INITIAL_WIN_CONDITION || this.winCondition;
@@ -740,13 +797,8 @@ class Game {
         } else {
             // in editor playtesting, also allow coins win if editor selected that mode
             // Only auto-win on coins in editor when explicitly set to "coins"
-            if (!this.isExported && this.winCondition === 'coins') {
-                const allPlatforms = (this.rooms || []).reduce((acc, r) => acc.concat(r.platforms || []), []);
-                const collected = allPlatforms.filter(p => p.type === 'collectible' && p.collected).length;
-                if (collected >= (this.coinGoal || 1)) {
-                    this.won = true;
-                }
-            }
+            // Editor: do not trigger a win state based on coin collection — keep editor playtesting non-terminal.
+            // (No-op intentionally)
         }
 
         // update particles each frame
@@ -773,8 +825,8 @@ class Game {
             
             // For spikes we want a transparent background (no filled rect)
             // Do not draw a full filled/stroked rect for spikes or semisolids; they have special visuals
-            if (platform.type === 'spike' || platform.type === 'semisolid' || platform.type === 'collectible' || platform.type === 'switchblock' || platform.type === 'blueswitchblock') {
-                // no stroked/filled rect for spikes, semisolids, or collectibles — they have special visuals
+            if (platform.type === 'spike' || platform.type === 'semisolid' || platform.type === 'collectible' || platform.type === 'switchblock' || platform.type === 'blueswitchblock' || platform.type === 'jumporb') {
+                // no stroked/filled rect for spikes, semisolids, collectibles, switchblocks, blueswitchblocks or jumporbs — they have special visuals
             } else {
                 ctx.fillStyle = platform.type === 'jumppad' ? '#AAA' : '#FFF';
                 ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
@@ -784,6 +836,9 @@ class Game {
             // Draw Spike visual cue
             if (platform.type === 'spike') {
                 // draw a single white triangle spanning the platform
+                ctx.save();
+                ctx.lineWidth = 0;
+                ctx.strokeStyle = 'transparent';
                 ctx.fillStyle = '#FFF';
                 ctx.beginPath();
                 ctx.moveTo(platform.x + platform.width / 2, platform.y);
@@ -791,6 +846,7 @@ class Game {
                 ctx.lineTo(platform.x + platform.width, platform.y + platform.height);
                 ctx.closePath();
                 ctx.fill();
+                ctx.restore();
             }
              
             // Draw Jumppad visual cue
@@ -807,24 +863,37 @@ class Game {
                  ctx.lineTo(midX + platform.width/4, topY + platform.height/4);
                  ctx.closePath();
                  ctx.fill();
+                 // add white border around jumppad cell for clarity
+                 ctx.lineWidth = 2;
+                 ctx.strokeStyle = '#FFF';
+                 ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
             }
 
             // Draw Semisolid visual cue: half-height white filled block (top half transparent)
             if (platform.type === 'semisolid') {
+                ctx.save();
+                ctx.lineWidth = 0;
+                ctx.strokeStyle = 'transparent';
                 ctx.fillStyle = '#FFF';
                 const hh = Math.floor(platform.height / 2);
                 // draw the top half filled white, leave bottom transparent and do not stroke
                 ctx.fillRect(platform.x, platform.y, platform.width, hh);
+                ctx.restore();
             }
             
             // Draw Flag visual as a yellow dot (editor runtime)
             if (platform.type === 'flag') {
+                // draw a checkmark centered in the cell
                 const cx = platform.x + platform.width/2;
                 const cy = platform.y + platform.height/2;
-                ctx.fillStyle = '#FFD400';
+                ctx.strokeStyle = '#808080';
+                ctx.lineWidth = Math.max(2, Math.floor(Math.min(platform.width, platform.height) * 0.12));
+                ctx.lineCap = 'round';
                 ctx.beginPath();
-                ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.22, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.moveTo(cx - platform.width * 0.18, cy);
+                ctx.lineTo(cx - platform.width * 0.02, cy + platform.height * 0.16);
+                ctx.lineTo(cx + platform.width * 0.22, cy - platform.height * 0.14);
+                ctx.stroke();
             }
 
             // Draw Door visual: slim tall rectangle with dark fill and light outline (match editor)
@@ -894,11 +963,25 @@ class Game {
                 const cx = platform.x + platform.width/2;
                 const cy = platform.y + platform.height/2;
                 // borderless filled collectible: no cell fill/background, just a filled cyan dot
-                ctx.fillStyle = '#00FFFF';
+                ctx.fillStyle = '#222222';
                 ctx.beginPath();
                 ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.28, 0, Math.PI * 2);
                 ctx.fill();
                 // add white border
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#FFF';
+                ctx.stroke();
+            }
+            
+            // Draw Jump Orb visual: yellow borderless circle (always visible, doesn't fill cell)
+            if (platform.type === 'jumporb') {
+                const cx = platform.x + platform.width/2;
+                const cy = platform.y + platform.height/2;
+                ctx.fillStyle = '#808080';
+                ctx.beginPath();
+                ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.36, 0, Math.PI * 2);
+                ctx.fill();
+                // add white border for clarity
                 ctx.lineWidth = 2;
                 ctx.strokeStyle = '#FFF';
                 ctx.stroke();
@@ -915,12 +998,17 @@ class Game {
 
             // Draw Flag visual as a yellow dot (editor runtime)
             if (platform.type === 'flag') {
+                // draw a checkmark centered in the cell (duplicate occurrence replaced)
                 const cx = platform.x + platform.width/2;
                 const cy = platform.y + platform.height/2;
-                ctx.fillStyle = '#FFD400';
+                ctx.strokeStyle = '#808080';
+                ctx.lineWidth = Math.max(2, Math.floor(Math.min(platform.width, platform.height) * 0.12));
+                ctx.lineCap = 'round';
                 ctx.beginPath();
-                ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.22, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.moveTo(cx - platform.width * 0.18, cy);
+                ctx.lineTo(cx - platform.width * 0.02, cy + platform.height * 0.16);
+                ctx.lineTo(cx + platform.width * 0.22, cy - platform.height * 0.14);
+                ctx.stroke();
             }
         }
         
@@ -1026,7 +1114,7 @@ class Game {
              // flag preview: yellow dot
              const cx = gx + w/2;
              const cy = gy + h/2;
-             ctx.fillStyle = '#FFD400';
+             ctx.fillStyle = '#808080';
              ctx.beginPath();
              ctx.arc(cx, cy, Math.min(w, h) * 0.22, 0, Math.PI * 2);
              ctx.fill();
@@ -1102,11 +1190,24 @@ class Game {
              ctx.closePath();
              ctx.fill();
         }
+        else if (this.currentTool === 'jumporb') {
+            // preview: yellow circular orb centered in cell (no background)
+            const cx = gx + w/2;
+            const cy = gy + h/2;
+            ctx.fillStyle = '#808080';
+            ctx.beginPath();
+            ctx.arc(cx, cy, Math.min(w, h) * 0.36, 0, Math.PI * 2);
+            ctx.fill();
+            // preview white outline
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#FFF';
+            ctx.stroke();
+        }
         else if (this.currentTool === 'collectible') {
             const cx = gx + w/2;
             const cy = gy + h/2;
             // preview as borderless filled cyan dot (no cell background)
-            ctx.fillStyle = '#00FFFF';
+            ctx.fillStyle = '#222222';
             ctx.beginPath();
             ctx.arc(cx, cy, Math.min(w, h) * 0.28, 0, Math.PI * 2);
             ctx.fill();
@@ -1135,7 +1236,7 @@ class Game {
         const cx = s.x + w / 2;
         const cy = s.y + h / 2;
         const radius = Math.min(w, h) * 0.28;
-        ctx.fillStyle = '#0F0';
+        ctx.fillStyle = '#636363';
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, Math.PI * 2);
         ctx.fill();
@@ -1175,6 +1276,8 @@ class Game {
                     if (sp.type === 'switch') sp.on = true;
                 }
             }
+            // also reset auto-run to room's saved value (do not force toggle)
+            if (this.rooms && this.rooms[this.currentRoom]) this.autoRunner = !!this.rooms[this.currentRoom].autoRunner;
         }
         // optional small flash / particle burst on death handled elsewhere; when toggling modes/undo shouldn't show effect
         // Do not spawn particles at the spawn point — death particles are emitted at the death location instead.
@@ -1222,6 +1325,7 @@ class Game {
         const showCoinCounterJson = JSON.stringify(!!this.showCoinCounter);
         const winConditionJson = JSON.stringify(this.winCondition || 'flag');
         const coinGoalJson = JSON.stringify(this.coinGoal || 1);
+        const autoRunnerPerRoomJson = JSON.stringify(this.rooms.map(r => !!r.autoRunner));
 
         // NOTE: runtime injection expects INITIAL_LEVEL_DATA shaped as array of rooms
         // --- Start Runtime Game Code Definition ---
@@ -1234,6 +1338,7 @@ canvas.height = 600;
 const SHOW_COIN_COUNTER = !!window.INITIAL_SHOW_COIN_COUNTER;
 const WIN_CONDITION = window.INITIAL_WIN_CONDITION || 'flag';
 const COIN_GOAL = (typeof window.INITIAL_COIN_GOAL === 'number') ? window.INITIAL_COIN_GOAL : (parseInt(window.INITIAL_COIN_GOAL) || 1);
+const AUTO_RUNNER_ROOMS = window.INITIAL_AUTO_RUNNER_ROOMS || [];
 
 class Platform {
     constructor(x, y, width, height, type = 'block', vx = 0, vy = 0, collidable = true) {
@@ -1257,8 +1362,10 @@ class Platform {
 class InputHandler {
     constructor() {
         this.keys = {};
+        this.justPressed = {};
         window.addEventListener('keydown', (e) => {
             this.keys[e.key.toLowerCase()] = true;
+            this.justPressed[e.key.toLowerCase()] = true;
         });
         window.addEventListener('keyup', (e) => {
             this.keys[e.key.toLowerCase()] = false;
@@ -1266,6 +1373,12 @@ class InputHandler {
     }
     isPressed(key) {
         return this.keys[key.toLowerCase()] || false;
+    }
+    isJustPressed(key) {
+        return !!this.justPressed[key.toLowerCase()];
+    }
+    clearJustPressed() {
+        this.justPressed = {};
     }
 }
 
@@ -1308,6 +1421,8 @@ class Game {
         this.particles = [];
         this.spawn = { x: room.spawn.x, y: room.spawn.y };
         this.showCoinCounter = SHOW_COIN_COUNTER;
+        // initialize per-room auto-run from injected array so exported level honors room setting on start
+        this.autoRunner = !!(AUTO_RUNNER_ROOMS && AUTO_RUNNER_ROOMS[window.__currentRoom]);
         // shared switch state for exported runtime
         // default to ON for exported runtime when not previously set
         window.__switchOn = (typeof window.__switchOn === 'boolean') ? window.__switchOn : true;
@@ -1402,6 +1517,8 @@ class Game {
             this.platforms = room.platforms.map(p => new Platform(p.x, p.y, p.width, p.height, p.type, p.vx || 0, p.vy || 0, typeof p.collidable === 'undefined' ? true : p.collidable));
             this.spawn = { x: room.spawn.x, y: room.spawn.y };
             this.resetPlayerToSpawnDeath();
+            // update auto-run flag for this runtime instance to match the new room
+            this.autoRunner = !!(AUTO_RUNNER_ROOMS && AUTO_RUNNER_ROOMS[window.__currentRoom]);
         }
         if (this.transitionTimer >= this.transitionDuration) {
             this.transitioning = false;
@@ -1438,11 +1555,15 @@ class Game {
         }
             
         // Handle input
-        if (this.keys['arrowleft'] || this.keys['a']) {
-            this.player.velocityX -= this.player.speed;
-        }
-        if (this.keys['arrowright'] || this.keys['d']) {
-            this.player.velocityX += this.player.speed;
+        if (this.autoRunner) {
+            this.player.velocityX += this.player.speed * 0.9;
+        } else {
+            if (this.keys['arrowleft'] || this.keys['a']) {
+                this.player.velocityX -= this.player.speed;
+            }
+            if (this.keys['arrowright'] || this.keys['d']) {
+                this.player.velocityX += this.player.speed;
+            }
         }
         if ((this.keys[' '] || this.keys['arrowup'] || this.keys['w']) && this.player.onGround) {
             this.player.velocityY = -this.player.jumpPower;
@@ -1480,6 +1601,8 @@ class Game {
                     if (!q.collidable) continue;
                     // runtime: skip switchblocks/blueswitchblocks when they are non-collidable per shared window.__switchOn
                     if ((q.type === 'switchblock' && !window.__switchOn) || (q.type === 'blueswitchblock' && window.__switchOn)) continue;
+                                        // moving objects should pass through flags, semisolids, collectibles and doors
+                    if (q.type === 'flag' || q.type === 'semisolid' || q.type === 'collectible' || q.type === 'door') continue;
                     if (p.x < q.x + q.width && p.x + p.width > q.x &&
                         p.y < q.y + q.height && p.y + p.height > q.y) {
                         collided = true;
@@ -1599,11 +1722,11 @@ class Game {
                          if (prevBottom > platform.y + 1) {
                              continue;
                          }
-                         if (!(prevBottom <= platform.y && overlapY <= overlapX)) {
+                         if (!(prevBottom <= platform.y && overlapY <= overlapX - this.collisionBuffer)) {
                              continue;
                          }
                      }
-                     if (overlapX < overlapY) {
+                     if (overlapX + this.collisionBuffer < overlapY) {
                          // resolve horizontally
                          if (overlapX1 < overlapX2) {
                              // push player left
@@ -1670,6 +1793,18 @@ class Game {
                          }
                      }
                 }
+                
+                // Jump Orb handling in exported runtime: trigger upward boost and particle flourish; orb is non-solid.
+                if (platform.type === 'jumporb') {
+                    // only activate if the player is pressing jump while touching the orb in exported runtime
+                    if (this.input.isJustPressed(' ') || this.input.isJustPressed('arrowup') || this.input.isJustPressed('w')) {
+                        this.player.velocityY = -this.player.jumpPower * 1.15;
+                        this.player.onGround = false;
+                        this.spawnDeathParticles(platform.x + platform.width/2, platform.y + platform.height/2, 8);
+                    }
+                    // orb is non-solid regardless
+                    continue;
+                }
             }
         }
 
@@ -1687,6 +1822,14 @@ class Game {
             this.spawnDeathParticles(this.player.x + this.player.width/2, canvas.height);
             this.attempts++;
             this.resetPlayerToSpawnDeath();
+        }
+
+        // Auto-run death in exported runtime: if auto-run is enabled and horizontal movement stalls, treat as death
+        if (this.autoRunner && Math.abs(this.player.velocityX) < 0.01) {
+            this.spawnDeathParticles(this.player.x + this.player.width/2, this.player.y + this.player.height/2);
+            this.attempts++;
+            this.resetPlayerToSpawnDeath();
+            return;
         }
 
         // after collisions and particle updates, check coins win condition
@@ -1722,7 +1865,7 @@ class Game {
         for (let platform of this.platforms) {
             
             // In exported runtime do not draw a full filled/stroked rect for spikes or semisolids
-            if (platform.type === 'spike' || platform.type === 'semisolid' || platform.type === 'collectible' || platform.type === 'switchblock' || platform.type === 'blueswitchblock') {
+            if (platform.type === 'spike' || platform.type === 'semisolid' || platform.type === 'collectible' || platform.type === 'switchblock' || platform.type === 'blueswitchblock' || platform.type === 'jumporb') {
                 // leave background transparent; semisolid will draw its top-half below
             } else {
                 ctx.fillStyle = platform.type === 'jumppad' ? '#AAA' : '#FFF';
@@ -1732,12 +1875,17 @@ class Game {
 
             // draw flag visual as a yellow dot (exported runtime)
             if (platform.type === 'flag') {
+                // draw a checkmark centered in the cell for exported runtime
                 const cx = platform.x + platform.width/2;
                 const cy = platform.y + platform.height/2;
-                ctx.fillStyle = '#FFD400';
+                ctx.strokeStyle = '#808080';
+                ctx.lineWidth = Math.max(2, Math.floor(Math.min(platform.width, platform.height) * 0.12));
+                ctx.lineCap = 'round';
                 ctx.beginPath();
-                ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.22, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.moveTo(cx - platform.width * 0.18, cy);
+                ctx.lineTo(cx - platform.width * 0.02, cy + platform.height * 0.16);
+                ctx.lineTo(cx + platform.width * 0.22, cy - platform.height * 0.14);
+                ctx.stroke();
             }
 
             // Draw Door visual: slim tall rectangle with dark fill and light outline (match editor)
@@ -1803,6 +1951,9 @@ class Game {
 
             if (platform.type === 'spike') {
                 // exported runtime: single white triangle spanning the platform
+                ctx.save();
+                ctx.lineWidth = 0;
+                ctx.strokeStyle = 'transparent';
                 ctx.fillStyle = '#FFF';
                 ctx.beginPath();
                 ctx.moveTo(platform.x + platform.width / 2, platform.y);
@@ -1810,6 +1961,7 @@ class Game {
                 ctx.lineTo(platform.x + platform.width, platform.y + platform.height);
                 ctx.closePath();
                 ctx.fill();
+                ctx.restore();
                 // no stroke for spikes
             }
             
@@ -1817,10 +1969,24 @@ class Game {
             if (platform.type === 'collectible' && !platform.collected) {
                 const cx = platform.x + platform.width/2;
                 const cy = platform.y + platform.height/2;
-                ctx.fillStyle = '#00FFFF';
+                ctx.fillStyle = '#222222';
                 ctx.beginPath();
                 ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.28, 0, Math.PI * 2);
                 ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#FFF';
+                ctx.stroke();
+            }
+            
+            // Draw Jump Orb visual in exported runtime: yellow borderless circle
+            if (platform.type === 'jumporb') {
+                const cx = platform.x + platform.width/2;
+                const cy = platform.y + platform.height/2;
+                ctx.fillStyle = '#808080';
+                ctx.beginPath();
+                ctx.arc(cx, cy, Math.min(platform.width, platform.height) * 0.36, 0, Math.PI * 2);
+                ctx.fill();
+                // add white border in exported runtime as well
                 ctx.lineWidth = 2;
                 ctx.strokeStyle = '#FFF';
                 ctx.stroke();
@@ -1839,14 +2005,22 @@ class Game {
                  ctx.lineTo(midX + platform.width/4, topY + platform.height/4);
                  ctx.closePath();
                  ctx.fill();
+                 // exported runtime: draw white border around jumppad cell
+                 ctx.lineWidth = 2;
+                 ctx.strokeStyle = '#FFF';
+                 ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
             }
 
             // Draw Semisolid visual cue: half-height white filled block (top half transparent)
             if (platform.type === 'semisolid') {
+                ctx.save();
+                ctx.lineWidth = 0;
+                ctx.strokeStyle = 'transparent';
                 ctx.fillStyle = '#FFF';
                 const hh = Math.floor(platform.height / 2);
                 // draw the top half filled white, leave bottom transparent and do not stroke
                 ctx.fillRect(platform.x, platform.y, platform.width, hh);
+                ctx.restore();
             }
             
             // If platform has velocity, draw a subtle blue border to indicate movement (exported runtime)
@@ -1928,6 +2102,8 @@ class Game {
     gameLoop() {
         this.update();
         this.draw();
+        // consume the just-pressed buffer each frame so holding a key doesn't retrigger "just pressed" events
+        if (this.input && typeof this.input.clearJustPressed === 'function') this.input.clearJustPressed();
         requestAnimationFrame(() => this.gameLoop());
     }
 }
@@ -2062,6 +2238,8 @@ document.addEventListener('DOMContentLoaded', () => {
         window.INITIAL_SHOW_COIN_COUNTER = ${showCoinCounterJson};
         window.INITIAL_WIN_CONDITION = ${winConditionJson};
         window.INITIAL_COIN_GOAL = ${coinGoalJson};
+        // per-room auto-run flags (array aligned to rooms)
+        window.INITIAL_AUTO_RUNNER_ROOMS = ${autoRunnerPerRoomJson};
     </script>
 
     <script>
@@ -2090,6 +2268,8 @@ ${runtimeGameContent}
     gameLoop() {
         this.update();
         this.draw();
+        // consume the just-pressed buffer each frame so holding a key doesn't retrigger "just pressed" events
+        if (this.input && typeof this.input.clearJustPressed === 'function') this.input.clearJustPressed();
         requestAnimationFrame(() => this.gameLoop());
     }
 }
